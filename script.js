@@ -8,17 +8,22 @@ let isSidebarOpen = false;
 // Fonctions pour les groupes
 function addGroup() {
     const groupInput = document.getElementById('groupInput');
-    if (groupInput.value.trim() === '') return;
+    const name = groupInput.value.trim();
+    
+    if (name === '') return;
 
     const group = {
         id: Date.now(),
-        name: groupInput.value.trim()
+        name: name
     };
 
     groups.push(group);
     saveGroups();
-    renderGroups();
     groupInput.value = '';
+    renderGroups();
+    
+    // Redirection automatique vers le nouveau groupe
+    selectGroup(group.id);
 }
 
 function editGroup(id) {
@@ -59,27 +64,50 @@ function backToGroups() {
 
 // Fonctions pour les todos
 function parseNaturalInput(input) {
-    // Regex pour matcher un nombre suivi d'un texte
-    const numberFirstRegex = /^(\d+)\s+(.+)$/;
-    // Regex pour matcher un texte suivi d'un nombre
-    const textFirstRegex = /^(.+)\s+(\d+)$/;
+    // Expressions régulières pour les différents formats
+    const patterns = [
+        // Format: nombre unité texte ou texte nombre unité
+        /^(\d+)\s*(ml|cl|l|g|kg|cs|cc)\s+(.+)$/i,
+        /^(.+)\s+(\d+)\s*(ml|cl|l|g|kg|cs|cc)$/i,
+        // Format: nombre texte ou texte nombre
+        /^(\d+)\s+(.+)$/,
+        /^(.+)\s+(\d+)$/,
+        // Format: texte seul
+        /^(.+)$/
+    ];
 
-    let match = input.match(numberFirstRegex) || input.match(textFirstRegex);
-    
-    if (match) {
-        const [_, part1, part2] = match;
-        const number = parseInt(numberFirstRegex.test(input) ? part1 : part2);
-        const text = numberFirstRegex.test(input) ? part2 : part1;
-        
-        return {
-            text: text.trim(),
-            value: number
-        };
+    for (let pattern of patterns) {
+        const match = input.trim().match(pattern);
+        if (match) {
+            // Pour les formats avec unités
+            if (match[2] && (typeof match[2] === 'string' && match[2].match(/^(ml|cl|l|g|kg|cs|cc)$/i))) {
+                return {
+                    text: capitalizeFirstLetter(match[3] || match[1]),
+                    value: parseFloat(match[1] || match[2]),
+                    unit: match[2].toLowerCase()
+                };
+            }
+            // Pour les formats sans unité
+            if (match[1] && match[2]) {
+                return {
+                    text: capitalizeFirstLetter(match[2] || match[1]),
+                    value: parseFloat(match[1]),
+                    unit: null
+                };
+            }
+            // Pour le texte seul
+            return {
+                text: capitalizeFirstLetter(match[1]),
+                value: null,
+                unit: null
+            };
+        }
     }
-    
+
     return {
-        text: input.trim(),
-        value: null
+        text: capitalizeFirstLetter(input),
+        value: null,
+        unit: null
     };
 }
 
@@ -94,26 +122,27 @@ function addTodo() {
     const parsed = parseNaturalInput(todoInput.value);
     parsed.text = capitalizeFirstLetter(parsed.text);
 
-    // Vérifier si un item avec le même nom existe déjà dans le groupe
     const existingTodo = todos.find(t => 
         t.groupId === currentGroup.id && 
         t.text.toLowerCase() === parsed.text.toLowerCase()
     );
 
     if (existingTodo) {
-        // Fusionner les valeurs si elles existent
-        if (parsed.value !== null && existingTodo.value !== null) {
-            existingTodo.value += parsed.value;
-        } else if (parsed.value !== null) {
-            existingTodo.value = parsed.value;
+        if (parsed.value !== null) {
+            if (parsed.unit === existingTodo.unit) {
+                existingTodo.value = (existingTodo.value || 0) + parsed.value;
+            } else if (!existingTodo.value) {
+                existingTodo.value = parsed.value;
+                existingTodo.unit = parsed.unit;
+            }
         }
     } else {
-        // Créer un nouveau todo
         const todo = {
             id: Date.now(),
             text: parsed.text,
             groupId: currentGroup.id,
-            value: parsed.value
+            value: parsed.value,
+            unit: parsed.unit
         };
         todos.push(todo);
     }
@@ -203,12 +232,13 @@ function renderCombinedTodos() {
     
     const uniqueTodos = new Map();
     selectedTodos.forEach(todo => {
-        const key = todo.text.toLowerCase();
+        const key = `${todo.text.toLowerCase()}_${todo.unit || 'nounit'}`;
         if (!uniqueTodos.has(key)) {
             uniqueTodos.set(key, {
                 id: Date.now() + Math.random(),
                 text: todo.text,
                 values: todo.value ? [todo.value] : [],
+                unit: todo.unit,
                 completed: false
             });
         } else {
@@ -219,10 +249,8 @@ function renderCombinedTodos() {
         }
     });
 
-    // Récupérer l'état sauvegardé des todos
     const savedGlobalTodos = JSON.parse(localStorage.getItem('globalTodos') || '[]');
     
-    // Mettre à jour l'état completed avec les données sauvegardées
     Array.from(uniqueTodos.values()).forEach(todo => {
         const savedTodo = savedGlobalTodos.find(t => t.text === todo.text);
         if (savedTodo) {
@@ -264,7 +292,7 @@ function renderCombinedTodos() {
                     <span class="${todo.completed ? 'line-through text-gray-500' : ''}">${todo.text}</span>
                     ${totalValue !== null ? `
                         <span class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full">
-                            ${totalValue}
+                            ${totalValue}${todo.unit ? ' ' + todo.unit : ''}
                         </span>
                     ` : ''}
                 </div>
@@ -274,7 +302,6 @@ function renderCombinedTodos() {
         sidebarContent.appendChild(todoElement);
     });
 
-    // Sauvegarder l'état actuel des todos globales
     localStorage.setItem('globalTodos', JSON.stringify(Array.from(uniqueTodos.values())));
 }
 
@@ -338,11 +365,10 @@ function renderTodos() {
     const todoList = document.getElementById('todoList');
     todoList.innerHTML = '';
 
-    // Grouper les todos par nom pour le rendu
     const groupedTodos = todos
         .filter(todo => todo.groupId === currentGroup.id)
         .reduce((acc, todo) => {
-            const key = todo.text.toLowerCase();
+            const key = `${todo.text.toLowerCase()}_${todo.unit || 'nounit'}`;
             if (!acc[key]) {
                 acc[key] = { ...todo };
             } else if (todo.value !== null) {
@@ -360,7 +386,7 @@ function renderTodos() {
                 <span>${todo.text}</span>
                 ${todo.value ? `
                     <span class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full">
-                        ${todo.value}
+                        ${todo.value}${todo.unit ? ' ' + todo.unit : ''}
                     </span>
                 ` : ''}
             </div>
@@ -408,8 +434,43 @@ function setupAutocomplete() {
     input.addEventListener('input', function(e) {
         const inputValue = e.target.value.toLowerCase();
         selectedIndex = -1;
+
+        // Gestion de l'autocomplétion des unités
+        const unitMatch = inputValue.match(/^(\d+)(c|k|m|l|g|cs|cc)$/i);
+        if (unitMatch) {
+            const number = unitMatch[1];
+            const partialUnit = unitMatch[2].toLowerCase();
+            
+            const unitSuggestions = ['ml', 'cl', 'l', 'g', 'kg', 'cs', 'cc']
+                .filter(unit => unit.startsWith(partialUnit));
+
+            if (unitSuggestions.length > 0) {
+                autocompleteList.innerHTML = unitSuggestions
+                    .map((unit, index) => `
+                        <div class="p-2 hover:bg-gray-100 cursor-pointer text-gray-700" 
+                             data-index="${index}"
+                             onclick="selectAutocomplete('${number}${unit}')">
+                            ${number}${unit}
+                        </div>
+                    `).join('');
+                autocompleteList.classList.remove('hidden');
+                return;
+            }
+        }
+
+        // Gestion de l'autocomplétion des items avec unités
+        const textWithUnitMatch = inputValue.match(/^(\d+\s*(ml|cl|l|g|kg|cs|cc)\s+)?(.+?)(\s+\d+\s*(ml|cl|l|g|kg|cs|cc)?)?$/i);
+        if (!textWithUnitMatch) {
+            autocompleteList.innerHTML = '';
+            autocompleteList.classList.add('hidden');
+            return;
+        }
+
+        const prefix = textWithUnitMatch[1] || ''; // Nombre et unité au début
+        const searchText = textWithUnitMatch[3]; // Texte
+        const suffix = textWithUnitMatch[4] || ''; // Nombre et unité à la fin
         
-        if (!inputValue || /^\d+\s+/.test(inputValue) || /\s+\d+$/.test(inputValue)) {
+        if (!searchText) {
             autocompleteList.innerHTML = '';
             autocompleteList.classList.add('hidden');
             return;
@@ -417,7 +478,8 @@ function setupAutocomplete() {
 
         const existingItems = getExistingItems();
         const matches = existingItems.filter(item => 
-            item.includes(inputValue) && item !== inputValue
+            item.toLowerCase().includes(searchText) && 
+            item.toLowerCase() !== searchText
         );
 
         if (matches.length > 0) {
@@ -426,8 +488,10 @@ function setupAutocomplete() {
                 .map((item, index) => `
                     <div class="p-2 hover:bg-gray-100 cursor-pointer text-gray-700" 
                          data-index="${index}"
-                         onclick="selectAutocomplete('${capitalizeFirstLetter(item)}')">
-                        ${capitalizeFirstLetter(item)}
+                         data-prefix="${prefix}"
+                         data-suffix="${suffix}"
+                         onclick="selectAutocomplete('${capitalizeFirstLetter(item)}', '${prefix}', '${suffix}')">
+                        ${prefix}${capitalizeFirstLetter(item)}${suffix}
                     </div>
                 `).join('');
             autocompleteList.classList.remove('hidden');
@@ -443,7 +507,6 @@ function setupAutocomplete() {
 
         if (suggestions.length === 0) return;
 
-        // Enlever la classe selected précédente
         if (selectedIndex >= 0) {
             suggestions[selectedIndex].classList.remove('bg-gray-100');
         }
@@ -460,20 +523,27 @@ function setupAutocomplete() {
             case 'Enter':
                 e.preventDefault();
                 if (selectedIndex >= 0) {
-                    const selectedValue = suggestions[selectedIndex].textContent.trim();
-                    selectAutocomplete(selectedValue);
+                    const selectedElement = suggestions[selectedIndex];
+                    const selectedValue = selectedElement.textContent.trim();
+                    const prefix = selectedElement.dataset.prefix || '';
+                    const suffix = selectedElement.dataset.suffix || '';
+                    if (selectedValue.match(/^\d+[a-z]+$/i)) {
+                        // Si c'est une suggestion d'unité
+                        selectAutocomplete(selectedValue);
+                    } else {
+                        // Si c'est une suggestion d'item
+                        selectAutocomplete(selectedValue.replace(prefix, '').replace(suffix, ''), prefix, suffix);
+                    }
                 }
                 return;
         }
 
-        // Ajouter la classe selected à la nouvelle sélection
         if (selectedIndex >= 0) {
             suggestions[selectedIndex].classList.add('bg-gray-100');
             suggestions[selectedIndex].scrollIntoView({ block: 'nearest' });
         }
     });
 
-    // Cacher la liste quand on clique ailleurs
     document.addEventListener('click', function(e) {
         if (!input.contains(e.target) && !autocompleteList.contains(e.target)) {
             autocompleteList.classList.add('hidden');
@@ -481,9 +551,15 @@ function setupAutocomplete() {
     });
 }
 
-function selectAutocomplete(value) {
+function selectAutocomplete(value, prefix = '', suffix = '') {
     const input = document.getElementById('todoInput');
-    input.value = value;
+    if (value.match(/^\d+[a-z]+$/i)) {
+        // Si c'est une unité complétée
+        input.value = value + ' ';
+    } else {
+        // Si c'est un item complété
+        input.value = `${prefix}${value}${suffix}`.trim();
+    }
     document.getElementById('autocompleteList').classList.add('hidden');
     input.focus();
 }
