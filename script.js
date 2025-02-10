@@ -442,12 +442,29 @@ function renderCombinedTodos() {
             </div>
         `;
         
-        // Gérer le clic sur toute la ligne
-        todoElement.addEventListener('click', (e) => {
-            if (e.target.type !== 'checkbox') {
-                const checkbox = todoElement.querySelector('input[type="checkbox"]');
+        const checkbox = todoElement.querySelector('input[type="checkbox"]');
+        
+        // Gérer le clic et le touch sur toute la ligne
+        const handleToggle = (e) => {
+            // Ne pas déclencher si on clique sur la checkbox directement
+            if (e.target !== checkbox) {
+                e.preventDefault();
                 checkbox.checked = !checkbox.checked;
+                toggleGlobalTodo(todo.id, todo.text);
             }
+        };
+
+        // Ajouter les événements pour mobile et desktop
+        todoElement.addEventListener('click', handleToggle);
+        todoElement.addEventListener('touchend', handleToggle);
+        
+        // Empêcher le double événement sur mobile
+        todoElement.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+        });
+
+        // Gérer la checkbox séparément
+        checkbox.addEventListener('change', () => {
             toggleGlobalTodo(todo.id, todo.text);
         });
         
