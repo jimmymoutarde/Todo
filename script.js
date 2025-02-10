@@ -56,14 +56,26 @@ function selectGroup(id) {
     // Cacher la bottom sheet quand on entre dans un groupe
     hideSidebar();
     
+    // Focus automatique sur l'input avec un léger délai
+    setTimeout(() => {
+        const todoInput = document.getElementById('todoInput');
+        todoInput.focus();
+    }, 100);
+    
     setupAutocomplete();
     renderTodos();
 }
 
 function backToGroups() {
-    currentGroup = null;
-    document.getElementById('groupView').classList.remove('hidden');
     document.getElementById('todoView').classList.add('hidden');
+    document.getElementById('groupView').classList.remove('hidden');
+    currentGroup = null;
+    
+    // Focus sur l'input de groupe avec un léger délai
+    setTimeout(() => {
+        const groupInput = document.getElementById('groupInput');
+        groupInput.focus();
+    }, 100);
 }
 
 // Fonctions pour les todos
@@ -352,21 +364,21 @@ function renderCombinedTodos() {
 
     const selectedTodos = todos.filter(todo => selectedGroups.has(todo.groupId));
     
+    // Fusion des todos identiques
     const uniqueTodos = new Map();
     selectedTodos.forEach(todo => {
-        const key = `${todo.text.toLowerCase()}_${todo.unit || 'nounit'}`;
+        const key = todo.text.toLowerCase();
         if (!uniqueTodos.has(key)) {
             uniqueTodos.set(key, {
                 id: Date.now() + Math.random(),
                 text: todo.text,
-                values: todo.value ? [todo.value] : [],
-                unit: todo.unit,
+                values: todo.value ? [{ value: todo.value, unit: todo.unit }] : [],
                 completed: false
             });
         } else {
             const existingTodo = uniqueTodos.get(key);
             if (todo.value !== null) {
-                existingTodo.values.push(todo.value);
+                existingTodo.values.push({ value: todo.value, unit: todo.unit });
             }
         }
     });
@@ -374,52 +386,70 @@ function renderCombinedTodos() {
     const savedGlobalTodos = JSON.parse(localStorage.getItem('globalTodos') || '[]');
     
     Array.from(uniqueTodos.values()).forEach(todo => {
-        const savedTodo = savedGlobalTodos.find(t => t.text === todo.text);
+        const savedTodo = savedGlobalTodos.find(t => t.text.toLowerCase() === todo.text.toLowerCase());
         if (savedTodo) {
             todo.completed = savedTodo.completed;
         }
     });
 
-    // Calculer la progression
+    // Calcul de la progression
     const totalTodos = uniqueTodos.size;
     const completedTodos = Array.from(uniqueTodos.values()).filter(todo => todo.completed).length;
-    const progressPercentage = totalTodos > 0 ? (completedTodos / totalTodos) * 100 : 0;
 
-    // Afficher la barre de progression
+    // Ajout de la barre de progression simplifiée
     const progressBar = document.createElement('div');
-    progressBar.className = 'mb-6';
+    progressBar.className = 'mb-4';
     progressBar.innerHTML = `
-        <div class="flex justify-end items-center mb-2">
-            <span class="text-sm font-medium text-blue-600">${completedTodos}/${totalTodos}</span>
+        <div class="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+            <div class="h-full bg-blue-500 transition-all duration-300" 
+                style="width: ${(completedTodos / totalTodos) * 100}%">
+            </div>
         </div>
-        <div class="w-full bg-gray-200 rounded-full h-2.5">
-            <div class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style="width: ${progressPercentage}%"></div>
+        <div class="mt-1 text-sm text-gray-500 text-center">
+            ${completedTodos}/${totalTodos}
         </div>
     `;
     sidebarContent.appendChild(progressBar);
 
-    // Afficher les todos
+    // Rendu des todos
     Array.from(uniqueTodos.values()).forEach(todo => {
         const todoElement = document.createElement('div');
-        todoElement.className = `flex items-center justify-between p-2 border rounded-md mb-2 ${todo.completed ? 'bg-gray-50' : ''}`;
+        todoElement.className = `flex items-center p-2 border rounded-md mb-2 cursor-pointer transition-colors
+            ${todo.completed ? 'bg-gray-50' : 'hover:bg-gray-50'}`;
         
-        const totalValue = todo.values.length > 0 ? todo.values.reduce((a, b) => a + b, 0) : null;
+        // Regrouper les valeurs par unité
+        const valuesByUnit = todo.values.reduce((acc, { value, unit }) => {
+            const key = unit || '';
+            if (!acc[key]) acc[key] = 0;
+            acc[key] += value;
+            return acc;
+        }, {});
         
         todoElement.innerHTML = `
-            <div class="flex items-center gap-4">
+            <div class="flex items-center gap-4 w-full">
                 <input type="checkbox" ${todo.completed ? 'checked' : ''} 
-                    onclick="toggleGlobalTodo('${todo.id}', '${todo.text}')" 
                     class="w-4 h-4 rounded-full border-gray-300 text-blue-600 focus:ring-blue-500">
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-1">
                     <span class="${todo.completed ? 'line-through text-gray-500' : ''}">${todo.text}</span>
-                    ${totalValue !== null ? `
-                        <span class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full">
-                            ${totalValue}${todo.unit ? ' ' + todo.unit : ''}
-                        </span>
-                    ` : ''}
+                    <div class="flex gap-1">
+                        ${Object.entries(valuesByUnit).map(([unit, total]) => `
+                            <span class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full">
+                                ${total}${unit ? ' ' + unit : ''}
+                            </span>
+                        `).join('')}
+                    </div>
                 </div>
             </div>
         `;
+        
+        // Gérer le clic sur toute la ligne
+        todoElement.addEventListener('click', (e) => {
+            if (e.target.type !== 'checkbox') {
+                const checkbox = todoElement.querySelector('input[type="checkbox"]');
+                checkbox.checked = !checkbox.checked;
+            }
+            toggleGlobalTodo(todo.id, todo.text);
+        });
         
         sidebarContent.appendChild(todoElement);
     });
@@ -428,18 +458,20 @@ function renderCombinedTodos() {
 }
 
 function toggleGlobalTodo(id, text) {
-    const globalTodos = JSON.parse(localStorage.getItem('globalTodos') || '[]');
-    const todo = globalTodos.find(t => t.text === text);
-    if (todo) {
-        todo.completed = !todo.completed;
+    const savedGlobalTodos = JSON.parse(localStorage.getItem('globalTodos') || '[]');
+    const existingTodo = savedGlobalTodos.find(t => t.text.toLowerCase() === text.toLowerCase());
+    
+    if (existingTodo) {
+        existingTodo.completed = !existingTodo.completed;
     } else {
-        globalTodos.push({
+        savedGlobalTodos.push({
             id: id,
             text: text,
             completed: true
         });
     }
-    localStorage.setItem('globalTodos', JSON.stringify(globalTodos));
+    
+    localStorage.setItem('globalTodos', JSON.stringify(savedGlobalTodos));
     renderCombinedTodos();
 }
 
@@ -662,18 +694,10 @@ function setupAutocomplete() {
             }
         }
 
-        // Gestion de l'autocomplétion des items avec unités
-        const textWithUnitMatch = inputValue.match(/^(\d+\s*(ml|cl|l|g|kg|cs|cc)\s+)?(.+?)(\s+\d+\s*(ml|cl|l|g|kg|cs|cc)?)?$/i);
-        if (!textWithUnitMatch) {
-            autocompleteList.innerHTML = '';
-            autocompleteList.classList.add('hidden');
-            return;
-        }
+        // Extraction du texte à rechercher en ignorant les nombres et unités
+        const searchText = inputValue.replace(/^\d+\s*(ml|cl|l|g|kg|cs|cc)?\s+/i, '')  // Ignore au début
+                                   .replace(/\s+\d+\s*(ml|cl|l|g|kg|cs|cc)?$/i, '');    // Ignore à la fin
 
-        const prefix = textWithUnitMatch[1] || ''; // Nombre et unité au début
-        const searchText = textWithUnitMatch[3]; // Texte
-        const suffix = textWithUnitMatch[4] || ''; // Nombre et unité à la fin
-        
         if (!searchText) {
             autocompleteList.innerHTML = '';
             autocompleteList.classList.add('hidden');
@@ -682,11 +706,15 @@ function setupAutocomplete() {
 
         const existingItems = getExistingItems();
         const matches = existingItems.filter(item => 
-            item.toLowerCase().includes(searchText) && 
-            item.toLowerCase() !== searchText
+            item.toLowerCase().includes(searchText.toLowerCase()) && 
+            item.toLowerCase() !== searchText.toLowerCase()
         );
 
         if (matches.length > 0) {
+            // Préserver les nombres et unités de la saisie originale
+            const prefix = inputValue.match(/^\d+\s*(ml|cl|l|g|kg|cs|cc)?\s+/i)?.[0] || '';
+            const suffix = inputValue.match(/\s+\d+\s*(ml|cl|l|g|kg|cs|cc)?$/i)?.[0] || '';
+
             autocompleteList.innerHTML = matches
                 .slice(0, 5)
                 .map((item, index) => `
@@ -792,17 +820,15 @@ function setupMobileKeyboard() {
         // Gérer la visibilité au focus/blur
         input.addEventListener('focus', () => {
             input.closest('.mobile-add-bar').classList.add('keyboard-open');
-            // Scroll vers l'input après un court délai pour laisser le clavier s'ouvrir
-            setTimeout(() => {
-                input.scrollIntoView({ behavior: 'smooth' });
-            }, 300);
+            // Scroll en haut de la page
+            window.scrollTo(0, 0);
         });
 
         input.addEventListener('blur', () => {
             input.closest('.mobile-add-bar').classList.remove('keyboard-open');
         });
 
-        // Gérer la soumission avec la touche "done"
+        // Gérer la soumission
         input.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -811,27 +837,8 @@ function setupMobileKeyboard() {
                 } else {
                     addTodo();
                 }
-                // Fermer le clavier sur mobile
-                input.blur();
             }
         });
-    });
-
-    // Détecter les changements de hauteur de la fenêtre (ouverture/fermeture du clavier)
-    let windowHeight = window.innerHeight;
-    window.addEventListener('resize', () => {
-        if (window.innerHeight < windowHeight) {
-            // Clavier ouvert
-            document.querySelectorAll('.mobile-add-bar').forEach(bar => {
-                bar.classList.add('keyboard-open');
-            });
-        } else {
-            // Clavier fermé
-            document.querySelectorAll('.mobile-add-bar').forEach(bar => {
-                bar.classList.remove('keyboard-open');
-            });
-        }
-        windowHeight = window.innerHeight;
     });
 }
 
