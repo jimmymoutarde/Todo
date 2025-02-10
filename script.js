@@ -14,7 +14,7 @@ function addGroup() {
 
     const group = {
         id: Date.now(),
-        name: name
+        name: capitalizeFirstLetter(name)
     };
 
     groups.push(group);
@@ -31,7 +31,7 @@ function editGroup(id) {
     const newName = prompt('Modifier le nom du groupe:', group.name);
     
     if (newName !== null && newName.trim() !== '') {
-        group.name = newName.trim();
+        group.name = capitalizeFirstLetter(newName.trim());
         saveGroups();
         renderGroups();
     }
@@ -52,8 +52,12 @@ function selectGroup(id) {
     document.getElementById('groupView').classList.add('hidden');
     document.getElementById('todoView').classList.remove('hidden');
     document.getElementById('currentGroupTitle').textContent = currentGroup.name;
-    renderTodos();
+    
+    // Cacher la bottom sheet quand on entre dans un groupe
+    hideSidebar();
+    
     setupAutocomplete();
+    renderTodos();
 }
 
 function backToGroups() {
@@ -194,16 +198,18 @@ function toggleTodo(id) {
     }
 }
 
-function toggleSelectGroup(id, event) {
-    event.stopPropagation();
-    
-    if (selectedGroups.has(id)) {
-        selectedGroups.delete(id);
+function toggleGroupSelection(groupId) {
+    if (selectedGroups.has(groupId)) {
+        selectedGroups.delete(groupId);
     } else {
-        selectedGroups.add(id);
+        selectedGroups.add(groupId);
     }
-    renderGroups();
     
+    renderGroups();
+    updateSidebarVisibility();
+}
+
+function updateSidebarVisibility() {
     if (selectedGroups.size > 0) {
         showSidebar();
     } else {
@@ -213,15 +219,180 @@ function toggleSelectGroup(id, event) {
 
 function showSidebar() {
     const sidebar = document.getElementById('sidebar');
-    sidebar.classList.remove('translate-x-full');
+    if (window.innerWidth < 768) {
+        sidebar.classList.remove('translate-y-full');
+        sidebar.classList.add('peek');
+        setupBottomSheet();
+    } else {
+        sidebar.classList.remove('translate-x-full');
+    }
     isSidebarOpen = true;
     renderCombinedTodos();
 }
 
 function hideSidebar() {
     const sidebar = document.getElementById('sidebar');
-    sidebar.classList.add('translate-x-full');
+    if (window.innerWidth < 768) {
+        sidebar.classList.add('translate-y-full');
+        sidebar.classList.remove('peek');
+        sidebar.style.height = 'auto'; // Réinitialiser la hauteur
+    } else {
+        sidebar.classList.add('translate-x-full');
+    }
     isSidebarOpen = false;
+}
+
+function setupBottomSheet() {
+    const sheet = document.getElementById('sidebar');
+    const content = sheet.querySelector('.bottom-sheet-content');
+    let startY;
+    let startHeight;
+    const initialHeight = 120; // Hauteur pour voir titre + progression
+    const minHeight = 120; // Même hauteur minimale
+    const maxHeight = window.innerHeight * 0.85;
+    let lastScrollTop = 0;
+    let isExpanded = false;
+
+    // Définir la hauteur initiale
+    sheet.style.height = `${initialHeight}px`;
+
+    function expand() {
+        sheet.style.transition = 'height 0.3s ease-out';
+        sheet.style.height = `${maxHeight}px`;
+        content.style.overflowY = 'auto';
+        isExpanded = true;
+    }
+
+    function collapse() {
+        sheet.style.transition = 'height 0.3s ease-out';
+        sheet.style.height = `${initialHeight}px`;
+        content.style.overflowY = 'hidden';
+        isExpanded = false;
+    }
+
+    // Gérer le scroll dans le contenu
+    content.addEventListener('scroll', function(e) {
+        const scrollTop = content.scrollTop;
+        const scrollDelta = scrollTop - lastScrollTop;
+
+        // Si on est au début du scroll
+        if (scrollTop === 0 && scrollDelta < 0 && !isExpanded) {
+            expand();
+        }
+
+        lastScrollTop = scrollTop;
+    });
+
+    // Gérer le touch/drag
+    let isDragging = false;
+    let startTouch;
+
+    function onStart(e) {
+        isDragging = true;
+        startY = e.touches ? e.touches[0].clientY : e.clientY;
+        startTouch = startY;
+        startHeight = sheet.getBoundingClientRect().height;
+        sheet.style.transition = 'none';
+    }
+
+    function onMove(e) {
+        if (!isDragging) return;
+        const currentY = e.touches ? e.touches[0].clientY : e.clientY;
+        const deltaY = startY - currentY;
+        const newHeight = Math.min(maxHeight, Math.max(minHeight, startHeight + deltaY));
+        sheet.style.height = `${newHeight}px`;
+        
+        if (newHeight > minHeight) {
+            content.style.overflowY = 'auto';
+            isExpanded = true;
+        } else {
+            content.style.overflowY = 'hidden';
+            isExpanded = false;
+        }
+    }
+
+    function onEnd(e) {
+        if (!isDragging) return;
+        isDragging = false;
+        sheet.style.transition = 'height 0.3s ease-out';
+
+        const endY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
+        const totalDelta = startTouch - endY;
+
+        // Détecter la direction du swipe
+        if (Math.abs(totalDelta) > 50) { // Seuil minimum pour le swipe
+            if (totalDelta > 0) {
+                // Swipe vers le haut
+                expand();
+            } else {
+                // Swipe vers le bas
+                collapse();
+            }
+        } else {
+            // Si le mouvement est trop petit, revenir à l'état le plus proche
+            const currentHeight = sheet.getBoundingClientRect().height;
+            if (currentHeight > (minHeight + maxHeight) / 2) {
+                expand();
+            } else {
+                collapse();
+            }
+        }
+    }
+
+    // Gérer les événements tactiles sur le header
+    const handle = sheet.querySelector('.bottom-sheet-header');
+    handle.addEventListener('touchstart', onStart, { passive: true });
+    handle.addEventListener('touchmove', onMove, { passive: true });
+    handle.addEventListener('touchend', onEnd);
+
+    // Gérer les événements tactiles sur le contenu
+    content.addEventListener('touchstart', function(e) {
+        if (content.scrollTop === 0) {
+            onStart(e);
+        }
+    }, { passive: true });
+    
+    content.addEventListener('touchmove', function(e) {
+        if (content.scrollTop === 0) {
+            onMove(e);
+        }
+    }, { passive: true });
+    
+    content.addEventListener('touchend', function(e) {
+        if (content.scrollTop === 0) {
+            onEnd(e);
+        }
+    });
+
+    // Ajouter un gestionnaire de scroll simple
+    let touchStartY;
+    
+    content.addEventListener('touchstart', function(e) {
+        touchStartY = e.touches[0].clientY;
+    }, { passive: true });
+
+    content.addEventListener('touchmove', function(e) {
+        if (!touchStartY) return;
+        
+        const touchY = e.touches[0].clientY;
+        const deltaY = touchStartY - touchY;
+
+        if (content.scrollTop === 0 && deltaY < 0) {
+            // Scroll vers le bas quand on est en haut
+            if (isExpanded) {
+                collapse();
+            }
+        } else if (content.scrollTop === 0 && deltaY > 0) {
+            // Scroll vers le haut quand on est en haut
+            if (!isExpanded) {
+                expand();
+            }
+        }
+    }, { passive: true });
+
+    content.addEventListener('touchend', function() {
+        touchStartY = null;
+    });
 }
 
 function renderCombinedTodos() {
@@ -325,48 +496,130 @@ function renderGroups() {
     const groupList = document.getElementById('groupList');
     groupList.innerHTML = '';
 
+    if (groups.length === 0) {
+        const emptyState = document.createElement('div');
+        emptyState.className = 'flex flex-col items-center justify-center p-8 text-center text-gray-500';
+        emptyState.innerHTML = `
+            <svg class="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                    d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z">
+                </path>
+            </svg>
+            <p class="text-lg font-medium">Aucun groupe</p>
+            <p class="mt-1">Créez votre premier groupe en utilisant le champ ci-dessous</p>
+        `;
+        groupList.appendChild(emptyState);
+        return;
+    }
+
     groups.forEach(group => {
-        const todoCount = todos.filter(todo => todo.groupId === group.id).length;
+        const itemCount = todos.filter(todo => todo.groupId === group.id).length;
+        
         const groupElement = document.createElement('div');
-        groupElement.className = `bg-white p-4 rounded-lg shadow-md ${selectedGroups.has(group.id) ? 'border-2 border-blue-500' : ''}`;
+        groupElement.className = `p-4 bg-white rounded-lg shadow-sm hover:bg-gray-50 transition-colors cursor-pointer
+            ${selectedGroups.has(group.id) ? 'ring-2 ring-blue-500' : ''}`;
         
         groupElement.innerHTML = `
             <div class="flex items-center justify-between">
-                <div class="flex items-center gap-4">
+                <div class="flex items-center gap-4 flex-1">
                     <input type="checkbox" 
-                        ${selectedGroups.has(group.id) ? 'checked' : ''} 
-                        onclick="toggleSelectGroup(${group.id}, event)"
-                        class="w-4 h-4 border-gray-300 text-blue-600 focus:ring-blue-500">
-                    <h3 class="text-lg font-semibold text-gray-700">${group.name}</h3>
-                    <span class="text-sm text-gray-500">${todoCount} tâches</span>
+                        ${selectedGroups.has(group.id) ? 'checked' : ''}
+                        class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                    <div class="flex items-center gap-2">
+                        <span class="text-gray-800">${group.name}</span>
+                        ${itemCount > 0 ? `
+                            <span class="text-sm px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full">
+                                ${itemCount}
+                            </span>
+                        ` : ''}
+                    </div>
                 </div>
-                <div class="flex gap-2">
-                    <button onclick="selectGroup(${group.id})" 
-                        class="text-blue-500 hover:text-blue-700 px-3 py-1 rounded-md border border-blue-500">
-                        Ouvrir
+                <div class="relative">
+                    <button class="p-1 hover:bg-gray-100 rounded-full group-menu-trigger">
+                        <svg class="w-5 h-5 text-gray-500" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 14a2 2 0 100-4 2 2 0 000 4zM12 21a2 2 0 100-4 2 2 0 000 4zM12 7a2 2 0 100-4 2 2 0 000 4z"/>
+                        </svg>
                     </button>
-                    <button onclick="editGroup(${group.id})" 
-                        class="text-blue-500 hover:text-blue-700">
-                        ✏️
-                    </button>
-                    <button onclick="deleteGroup(${group.id})" 
-                        class="text-red-500 hover:text-red-700">
-                        🗑️
-                    </button>
+                    <div class="hidden absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-10 group-menu">
+                        <button onclick="editGroup(${group.id})" 
+                            class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                            Renommer
+                        </button>
+                        <button onclick="deleteGroup(${group.id})" 
+                            class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">
+                            Supprimer
+                        </button>
+                    </div>
                 </div>
             </div>
         `;
         
+        // Gestion des événements
+        const checkbox = groupElement.querySelector('input[type="checkbox"]');
+        const menuTrigger = groupElement.querySelector('.group-menu-trigger');
+        const menu = groupElement.querySelector('.group-menu');
+        
+        // Empêcher la propagation du clic sur la checkbox
+        checkbox.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleGroupSelection(group.id);
+        });
+        
+        // Gestion du menu
+        menuTrigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            menu.classList.toggle('hidden');
+        });
+        
+        // Fermer le menu au clic ailleurs
+        document.addEventListener('click', (e) => {
+            if (!menuTrigger.contains(e.target)) {
+                menu.classList.add('hidden');
+            }
+        });
+        
+        // Empêcher la propagation des clics du menu
+        menu.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+        
+        // Clic sur la carte pour ouvrir le groupe
+        groupElement.addEventListener('click', (e) => {
+            if (!e.target.matches('input[type="checkbox"], button, .group-menu *, .group-menu-trigger *')) {
+                selectGroup(group.id);
+            }
+        });
+        
         groupList.appendChild(groupElement);
     });
+
+    updateSidebarVisibility();
 }
 
 function renderTodos() {
     const todoList = document.getElementById('todoList');
     todoList.innerHTML = '';
 
-    const groupedTodos = todos
-        .filter(todo => todo.groupId === currentGroup.id)
+    const currentTodos = todos.filter(todo => todo.groupId === currentGroup.id);
+
+    if (currentTodos.length === 0) {
+        // Empty state pour les todos
+        const emptyState = document.createElement('div');
+        emptyState.className = 'flex flex-col items-center justify-center p-8 text-center text-gray-500';
+        emptyState.innerHTML = `
+            <svg class="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4">
+                </path>
+            </svg>
+            <p class="text-lg font-medium">Liste vide</p>
+            <p class="mt-1">Ajoutez votre premier élément en utilisant le champ ci-dessous</p>
+        `;
+        todoList.appendChild(emptyState);
+        return;
+    }
+
+    const groupedTodos = currentTodos
         .reduce((acc, todo) => {
             const key = `${todo.text.toLowerCase()}_${todo.unit || 'nounit'}`;
             if (!acc[key]) {
@@ -563,3 +816,20 @@ function selectAutocomplete(value, prefix = '', suffix = '') {
     document.getElementById('autocompleteList').classList.add('hidden');
     input.focus();
 }
+
+// Initialisation
+window.addEventListener('resize', function() {
+    const sidebar = document.getElementById('sidebar');
+    if (window.innerWidth >= 768) {
+        sidebar.style.height = '100%';
+        if (isSidebarOpen) {
+            sidebar.classList.remove('translate-y-full');
+            sidebar.classList.remove('translate-x-full');
+        }
+    } else {
+        if (isSidebarOpen) {
+            sidebar.classList.remove('translate-x-full');
+            sidebar.classList.remove('translate-y-full');
+        }
+    }
+});
