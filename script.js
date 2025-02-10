@@ -22,8 +22,8 @@ function addGroup() {
     groupInput.value = '';
     renderGroups();
     
-    // Redirection automatique vers le nouveau groupe
-    selectGroup(group.id);
+    // Fermer le clavier sur mobile
+    groupInput.blur();
 }
 
 function editGroup(id) {
@@ -154,6 +154,8 @@ function addTodo() {
     saveTodos();
     renderTodos();
     todoInput.value = '';
+    // Fermer le clavier sur mobile
+    todoInput.blur();
 }
 
 function editTodo(id) {
@@ -250,7 +252,6 @@ function setupBottomSheet() {
     const initialHeight = 120; // Hauteur pour voir titre + progression
     const minHeight = 120; // Même hauteur minimale
     const maxHeight = window.innerHeight * 0.85;
-    let lastScrollTop = 0;
     let isExpanded = false;
 
     // Définir la hauteur initiale
@@ -269,19 +270,6 @@ function setupBottomSheet() {
         content.style.overflowY = 'hidden';
         isExpanded = false;
     }
-
-    // Gérer le scroll dans le contenu
-    content.addEventListener('scroll', function(e) {
-        const scrollTop = content.scrollTop;
-        const scrollDelta = scrollTop - lastScrollTop;
-
-        // Si on est au début du scroll
-        if (scrollTop === 0 && scrollDelta < 0 && !isExpanded) {
-            expand();
-        }
-
-        lastScrollTop = scrollTop;
-    });
 
     // Gérer le touch/drag
     let isDragging = false;
@@ -345,54 +333,17 @@ function setupBottomSheet() {
     handle.addEventListener('touchmove', onMove, { passive: true });
     handle.addEventListener('touchend', onEnd);
 
-    // Gérer les événements tactiles sur le contenu
+    // Permettre le scroll dans le contenu une fois étendu
     content.addEventListener('touchstart', function(e) {
-        if (content.scrollTop === 0) {
-            onStart(e);
-        }
-    }, { passive: true });
-    
-    content.addEventListener('touchmove', function(e) {
-        if (content.scrollTop === 0) {
-            onMove(e);
-        }
-    }, { passive: true });
-    
-    content.addEventListener('touchend', function(e) {
-        if (content.scrollTop === 0) {
-            onEnd(e);
-        }
-    });
-
-    // Ajouter un gestionnaire de scroll simple
-    let touchStartY;
-    
-    content.addEventListener('touchstart', function(e) {
-        touchStartY = e.touches[0].clientY;
-    }, { passive: true });
-
-    content.addEventListener('touchmove', function(e) {
-        if (!touchStartY) return;
-        
-        const touchY = e.touches[0].clientY;
-        const deltaY = touchStartY - touchY;
-
-        if (content.scrollTop === 0 && deltaY < 0) {
-            // Scroll vers le bas quand on est en haut
-            if (isExpanded) {
-                collapse();
-            }
-        } else if (content.scrollTop === 0 && deltaY > 0) {
-            // Scroll vers le haut quand on est en haut
-            if (!isExpanded) {
-                expand();
-            }
+        if (!isDragging && isExpanded) {
+            e.stopPropagation();
         }
     }, { passive: true });
 
-    content.addEventListener('touchend', function() {
-        touchStartY = null;
-    });
+    // Empêcher la propagation du scroll vers le body
+    content.addEventListener('scroll', function(e) {
+        e.stopPropagation();
+    }, { passive: true });
 }
 
 function renderCombinedTodos() {
@@ -833,3 +784,56 @@ window.addEventListener('resize', function() {
         }
     }
 });
+
+function setupMobileKeyboard() {
+    const inputs = document.querySelectorAll('#groupInput, #todoInput');
+    
+    inputs.forEach(input => {
+        // Gérer la visibilité au focus/blur
+        input.addEventListener('focus', () => {
+            input.closest('.mobile-add-bar').classList.add('keyboard-open');
+            // Scroll vers l'input après un court délai pour laisser le clavier s'ouvrir
+            setTimeout(() => {
+                input.scrollIntoView({ behavior: 'smooth' });
+            }, 300);
+        });
+
+        input.addEventListener('blur', () => {
+            input.closest('.mobile-add-bar').classList.remove('keyboard-open');
+        });
+
+        // Gérer la soumission avec la touche "done"
+        input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (input.id === 'groupInput') {
+                    addGroup();
+                } else {
+                    addTodo();
+                }
+                // Fermer le clavier sur mobile
+                input.blur();
+            }
+        });
+    });
+
+    // Détecter les changements de hauteur de la fenêtre (ouverture/fermeture du clavier)
+    let windowHeight = window.innerHeight;
+    window.addEventListener('resize', () => {
+        if (window.innerHeight < windowHeight) {
+            // Clavier ouvert
+            document.querySelectorAll('.mobile-add-bar').forEach(bar => {
+                bar.classList.add('keyboard-open');
+            });
+        } else {
+            // Clavier fermé
+            document.querySelectorAll('.mobile-add-bar').forEach(bar => {
+                bar.classList.remove('keyboard-open');
+            });
+        }
+        windowHeight = window.innerHeight;
+    });
+}
+
+// Appeler la fonction au chargement
+document.addEventListener('DOMContentLoaded', setupMobileKeyboard);
